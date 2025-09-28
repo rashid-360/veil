@@ -8,12 +8,34 @@ import SunCalc from "suncalc";
 
 type Coordinate = { lat: number; lng: number };
 
+interface LocationResult {
+  lat: string;
+  lon: string;
+  display_name: string;
+}
+
+interface RouteSegment {
+  lat: number;
+  lng: number;
+}
+
+interface RoutingControl {
+  addTo: (map: L.Map) => RoutingControl;
+  on: (event: string, callback: (e: RouteEvent) => void) => void;
+}
+
+interface RouteEvent {
+  routes: Array<{
+    coordinates: RouteSegment[];
+  }>;
+}
+
 export default function MapWithSunRoute() {
   const [map, setMap] = useState<L.Map | null>(null);
   const [startText, setStartText] = useState("");
   const [endText, setEndText] = useState("");
-  const [startSuggestions, setStartSuggestions] = useState<any[]>([]);
-  const [endSuggestions, setEndSuggestions] = useState<any[]>([]);
+  const [startSuggestions, setStartSuggestions] = useState<LocationResult[]>([]);
+  const [endSuggestions, setEndSuggestions] = useState<LocationResult[]>([]);
   const [startCoords, setStartCoords] = useState<Coordinate | null>(null);
   const [endCoords, setEndCoords] = useState<Coordinate | null>(null);
   const [customTime, setCustomTime] = useState<string>("");
@@ -24,11 +46,11 @@ export default function MapWithSunRoute() {
   const panelRef = useRef<HTMLDivElement>(null);
   const dragOffset = useRef({ x: 0, y: 0 });
   const isDragging = useRef(false);
-  const routingControlRef = useRef<any>(null);
+  const routingControlRef = useRef<RoutingControl | null>(null);
 
   useEffect(() => {
     // Fix default marker icons
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
+    delete (L.Icon.Default.prototype as L.Icon.Default & { _getIconUrl?: unknown })._getIconUrl;
     L.Icon.Default.mergeOptions({
       iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
       iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
@@ -85,13 +107,13 @@ export default function MapWithSunRoute() {
     }
   };
 
-  const selectStart = (loc: any) => {
+  const selectStart = (loc: LocationResult) => {
     setStartText(loc.display_name);
     setStartCoords({ lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) });
     setStartSuggestions([]);
   };
 
-  const selectEnd = (loc: any) => {
+  const selectEnd = (loc: LocationResult) => {
     setEndText(loc.display_name);
     setEndCoords({ lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) });
     setEndSuggestions([]);
@@ -141,7 +163,7 @@ export default function MapWithSunRoute() {
 
       // Clear previous layers
       map.eachLayer(layer => {
-        if ((layer as any).options?.weight === 5) {
+        if ((layer as L.Polyline).options?.weight === 5) {
           map.removeLayer(layer);
         }
       });
@@ -174,7 +196,20 @@ export default function MapWithSunRoute() {
       const startLatLng = L.latLng(start.lat, start.lng);
       const endLatLng = L.latLng(end.lat, end.lng);
 
-      const control = (L as any).Routing.control({
+      const control = (L as unknown as {
+        Routing: {
+          control: (options: {
+            waypoints: L.LatLng[];
+            addWaypoints: boolean;
+            draggableWaypoints: boolean;
+            show: boolean;
+            fitSelectedRoutes: boolean;
+            routeWhileDragging: boolean;
+            lineOptions: { styles: Array<{ opacity: number; weight: number }> };
+            createMarker: (i: number, wp: { latLng: L.LatLng }) => L.Marker | null;
+          }) => RoutingControl;
+        };
+      }).Routing.control({
         waypoints: [startLatLng, endLatLng],
         addWaypoints: false,
         draggableWaypoints: false,
@@ -210,8 +245,8 @@ export default function MapWithSunRoute() {
         }
       }, 100);
 
-      control.on("routesfound", (e: any) => {
-        const coords: Coordinate[] = e.routes[0].coordinates.map((c: any) => ({
+      control.on("routesfound", (e: RouteEvent) => {
+        const coords: Coordinate[] = e.routes[0].coordinates.map((c: RouteSegment) => ({
           lat: c.lat,
           lng: c.lng,
         }));
@@ -262,7 +297,7 @@ export default function MapWithSunRoute() {
         }
       });
 
-      control.on("routingerror", (e: any) => {
+      control.on("routingerror", (e: Error) => {
         setError("Failed to calculate route. Please try different locations.");
         console.error("Routing error:", e);
       });
