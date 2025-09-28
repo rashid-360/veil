@@ -1,0 +1,665 @@
+"use client";
+import { useEffect, useState, useRef } from "react";
+
+// SunCalc calculations inline to avoid import issues
+const getSunPosition = (date: Date, lat: number, lng: number) => {
+  const toRad = Math.PI / 180;
+  const toDeg = 180 / Math.PI;
+  
+  const dayMs = 1000 * 60 * 60 * 24;
+  const J1970 = 2440588;
+  const J2000 = 2451545;
+  
+  const toJulian = (date: Date) => date.getTime() / dayMs - 0.5 + J1970;
+  const fromJulian = (j: number) => new Date((j + 0.5 - J1970) * dayMs);
+  const toDays = (date: Date) => toJulian(date) - J2000;
+  
+  const rightAscension = (l: number, b: number) => Math.atan2(Math.sin(l) * Math.cos(0.409093) - Math.tan(b) * Math.sin(0.409093), Math.cos(l));
+  const declination = (l: number, b: number) => Math.asin(Math.sin(b) * Math.cos(0.409093) + Math.cos(b) * Math.sin(0.409093) * Math.sin(l));
+  const azimuth = (H: number, phi: number, dec: number) => Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(phi) - Math.tan(dec) * Math.cos(phi));
+  const altitude = (H: number, phi: number, dec: number) => Math.asin(Math.sin(phi) * Math.sin(dec) + Math.cos(phi) * Math.cos(dec) * Math.cos(H));
+  const siderealTime = (d: number, lw: number) => (4.894961 + 6.300388099 * d + lw);
+  
+  const solarMeanAnomaly = (d: number) => (6.240040768 + 0.0172019699 * d);
+  const eclipticLongitude = (M: number) => (1.796593063 + M + 0.034906585 * Math.sin(M));
+  
+  const d = toDays(date);
+  const L = eclipticLongitude(solarMeanAnomaly(d));
+  const dec = declination(L, 0);
+  const ra = rightAscension(L, 0);
+  const lw = -lng * toRad;
+  const phi = lat * toRad;
+  const H = siderealTime(d, lw) - ra;
+  
+  return {
+    azimuth: azimuth(H, phi, dec),
+    altitude: altitude(H, phi, dec)
+  };
+};
+
+type Coordinate = { lat: number; lng: number };
+
+interface LocationResult {
+  lat: string;
+  lon: string;
+  display_name: string;
+}
+
+export default function MapWithSunRoute() {
+  const [map, setMap] = useState<any>(null);
+  const [L, setL] = useState<any>(null);
+  const [startText, setStartText] = useState("");
+  const [endText, setEndText] = useState("");
+  const [startSuggestions, setStartSuggestions] = useState<LocationResult[]>([]);
+  const [endSuggestions, setEndSuggestions] = useState<LocationResult[]>([]);
+  const [startCoords, setStartCoords] = useState<Coordinate | null>(null);
+  const [endCoords, setEndCoords] = useState<Coordinate | null>(null);
+  const [customTime, setCustomTime] = useState<string>("");
+  const [useCurrentTime, setUseCurrentTime] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string>("");
+  
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const isDragging = useRef(false);
+  const routingControlRef = useRef<any>(null);
+  const debounceTimeouts = useRef<{ start?: NodeJS.Timeout; end?: NodeJS.Timeout }>({});
+
+  // Load routing machine dynamically
+  const loadRoutingMachine = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      // Check if already loaded
+      if ((window as any).L && (window as any).L.Routing) {
+        resolve();
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js';
+      script.async = true;
+      
+      script.onload = () => {
+        // Wait a bit for the script to initialize
+        setTimeout(() => {
+          if ((window as any).L && (window as any).L.Routing) {
+            resolve();
+          } else {
+            reject(new Error('Routing machine failed to initialize'));
+          }
+        }, 100);
+      };
+      
+      script.onerror = () => {
+        reject(new Error('Failed to load routing machine'));
+      };
+      
+      document.head.appendChild(script);
+    });
+  };
+
+  // Load Leaflet dynamically on client only
+  useEffect(() => {
+    const loadLeaflet = async () => {
+      try {
+        // Load Leaflet CSS
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+        document.head.appendChild(link);
+
+        const leaflet = await import('leaflet');
+        
+        // Fix default markers
+        delete (leaflet.Icon.Default.prototype as any)._getIconUrl;
+        leaflet.Icon.Default.mergeOptions({
+          iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+          iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+          shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+        });
+
+        const mapInstance = leaflet.map("map").setView([51.505, -0.09], 13);
+        
+        leaflet.tileLayer(
+          "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+          {
+            attribution: '&copy; <a href="https://www.carto.com/">CARTO</a>',
+            subdomains: "abcd",
+            maxZoom: 19,
+          }
+        ).addTo(mapInstance);
+
+        // Load routing machine script dynamically
+        await loadRoutingMachine();
+
+        setL(leaflet);
+        setMap(mapInstance);
+      } catch (err) {
+        setError("Failed to load map. Please refresh the page.");
+        console.error("Map loading error:", err);
+      }
+    };
+
+    loadLeaflet();
+
+    return () => {
+      if (map) {
+        map.remove();
+      }
+    };
+  }, []);
+
+  const searchLocation = async (query: string): Promise<LocationResult[]> => {
+    if (!query.trim()) return [];
+    
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          query
+        )}&format=json&limit=5&addressdetails=1`,
+        { 
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'SunRouteApp/1.0'
+          }
+        }
+      );
+      
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+      
+      const data = await res.json();
+      return data.filter((item: any) => item.lat && item.lon) || [];
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log("Search request timed out");
+      } else {
+        console.error("Search error:", err);
+      }
+      return [];
+    }
+  };
+
+  const handleStartChange = async (val: string) => {
+    setStartText(val);
+    
+    // Clear previous timeout
+    if (debounceTimeouts.current.start) {
+      clearTimeout(debounceTimeouts.current.start);
+    }
+    
+    if (val.length > 2) {
+      // Debounce search requests
+      debounceTimeouts.current.start = setTimeout(async () => {
+        const results = await searchLocation(val);
+        setStartSuggestions(results);
+      }, 300);
+    } else {
+      setStartSuggestions([]);
+    }
+  };
+
+  const handleEndChange = async (val: string) => {
+    setEndText(val);
+    
+    // Clear previous timeout
+    if (debounceTimeouts.current.end) {
+      clearTimeout(debounceTimeouts.current.end);
+    }
+    
+    if (val.length > 2) {
+      // Debounce search requests
+      debounceTimeouts.current.end = setTimeout(async () => {
+        const results = await searchLocation(val);
+        setEndSuggestions(results);
+      }, 300);
+    } else {
+      setEndSuggestions([]);
+    }
+  };
+
+  const selectStart = (loc: LocationResult) => {
+    setStartText(loc.display_name);
+    setStartCoords({ lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) });
+    setStartSuggestions([]);
+  };
+
+  const selectEnd = (loc: LocationResult) => {
+    setEndText(loc.display_name);
+    setEndCoords({ lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) });
+    setEndSuggestions([]);
+  };
+
+  const getBearing = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const toDeg = (rad: number) => (rad * 180) / Math.PI;
+    
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - 
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+    
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  };
+
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Earth's radius in km
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    
+    const a = Math.sin(dLat / 2) ** 2 + 
+              Math.cos((lat1 * Math.PI) / 180) * 
+              Math.cos((lat2 * Math.PI) / 180) * 
+              Math.sin(dLon / 2) ** 2;
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c; // Distance in km
+  };
+
+  const timePerSegment = (lat1: number, lon1: number, lat2: number, lon2: number, speed = 15): number => {
+    const distance = calculateDistance(lat1, lon1, lat2, lon2);
+    return (distance / speed) * 3600 * 1000; // Time in milliseconds
+  };
+
+  const getSunAzimuth = (lat: number, lon: number, date: Date = new Date()) => {
+    const sunPos = getSunPosition(date, lat, lon);
+    return {
+      azimuth: ((sunPos.azimuth * 180) / Math.PI + 180) % 360,
+      altitude: (sunPos.altitude * 180) / Math.PI,
+    };
+  };
+
+  const drawRouteSun = async () => {
+    if (!map || !L) return;
+    
+    setIsLoading(true);
+    setError("");
+
+    try {
+      // Clear existing route
+      if (routingControlRef.current) {
+        map.removeControl(routingControlRef.current);
+        routingControlRef.current = null;
+      }
+
+      // Remove existing polylines
+      map.eachLayer((layer: any) => {
+        if (layer.options?.weight === 5) {
+          map.removeLayer(layer);
+        }
+      });
+
+      let start = startCoords;
+      let end = endCoords;
+
+      // Resolve coordinates if needed
+      if (!start && startText.trim()) {
+        const startResults = await searchLocation(startText);
+        if (startResults.length > 0) {
+          start = {
+            lat: parseFloat(startResults[0].lat),
+            lng: parseFloat(startResults[0].lon),
+          };
+          setStartCoords(start);
+        }
+      }
+
+      if (!end && endText.trim()) {
+        const endResults = await searchLocation(endText);
+        if (endResults.length > 0) {
+          end = {
+            lat: parseFloat(endResults[0].lat),
+            lng: parseFloat(endResults[0].lon),
+          };
+          setEndCoords(end);
+        }
+      }
+
+      if (!start || !end) {
+        setError("Please select both start and end locations");
+        return;
+      }
+
+      // Validate coordinates
+      if (isNaN(start.lat) || isNaN(start.lng) || isNaN(end.lat) || isNaN(end.lng)) {
+        setError("Invalid coordinates. Please select valid locations.");
+        return;
+      }
+
+      const startLatLng = L.latLng(start.lat, start.lng);
+      const endLatLng = L.latLng(end.lat, end.lng);
+
+      // Check if L.Routing exists
+      if (!L.Routing && !(window as any).L.Routing) {
+        setError("Routing functionality not available. Please refresh the page.");
+        return;
+      }
+
+      const routingL = (window as any).L || L;
+
+      const control = routingL.Routing.control({
+        waypoints: [startLatLng, endLatLng],
+        addWaypoints: false,
+        draggableWaypoints: false,
+        show: false,
+        fitSelectedRoutes: true,
+        routeWhileDragging: false,
+        lineOptions: {
+          styles: [{ opacity: 0, weight: 0 }],
+        },
+        createMarker: () => null, // Don't create default markers
+      });
+
+      routingControlRef.current = control;
+      control.addTo(map);
+
+      // Hide routing instructions
+      setTimeout(() => {
+        const routingContainer = document.querySelector(".leaflet-routing-container");
+        if (routingContainer) {
+          (routingContainer as HTMLElement).style.display = "none";
+        }
+      }, 100);
+
+      control.on("routesfound", (e: any) => {
+        try {
+          if (!e.routes || e.routes.length === 0) {
+            setError("No route found between the selected locations");
+            return;
+          }
+
+          const coords: Coordinate[] = e.routes[0].coordinates.map((c: any) => ({
+            lat: c.lat,
+            lng: c.lng,
+          }));
+
+          if (coords.length < 2) {
+            setError("Route too short to analyze");
+            return;
+          }
+
+          const startTime = useCurrentTime ? new Date() : new Date(customTime || Date.now());
+          let cumulativeTime = 0;
+          let leftSunTime = 0;
+          let rightSunTime = 0;
+          let totalSegments = 0;
+
+          coords.forEach((curr, i) => {
+            if (i === coords.length - 1) return;
+
+            const next = coords[i + 1];
+            const segmentTime = timePerSegment(curr.lat, curr.lng, next.lat, next.lng);
+            cumulativeTime += segmentTime;
+            
+            const dateAtSegment = new Date(startTime.getTime() + cumulativeTime);
+            const heading = getBearing(curr.lat, curr.lng, next.lat, next.lng);
+            const sun = getSunAzimuth(curr.lat, curr.lng, dateAtSegment);
+            
+            // Calculate relative angle between sun and heading
+            const relAngle = (sun.azimuth - heading + 360) % 360;
+
+            let color = "#4444aa"; // Default nighttime color
+
+            if (sun.altitude > 0) { // Sun is above horizon
+              totalSegments++;
+              if (relAngle < 180) {
+                rightSunTime += segmentTime;
+                color = "#22aa22"; // Green for sun on right
+              } else {
+                leftSunTime += segmentTime;
+                color = "#aa2222"; // Red for sun on left
+              }
+            }
+
+            // Draw segment
+            L.polyline(
+              [[curr.lat, curr.lng], [next.lat, next.lng]],
+              {
+                color,
+                weight: 5,
+                opacity: 0.8,
+              }
+            ).addTo(map);
+          });
+
+          // Update percentage display
+          const totalSunTime = leftSunTime + rightSunTime;
+          const leftPercent = totalSunTime > 0 ? Math.round((leftSunTime / totalSunTime) * 100) : 0;
+          const rightPercent = totalSunTime > 0 ? Math.round((rightSunTime / totalSunTime) * 100) : 0;
+
+          const percentDiv = document.getElementById("sunPercent");
+          if (percentDiv) {
+            if (totalSunTime === 0) {
+              percentDiv.innerHTML = "Route entirely in darkness 🌙";
+            } else {
+              percentDiv.innerHTML = `Left: ${leftPercent}% ☀️ | Right: ${rightPercent}% ☀️`;
+            }
+          }
+
+          // Fit map to route
+          const group = L.featureGroup(coords.slice(0, -1).map((curr, i) => 
+            L.polyline([[curr.lat, curr.lng], [coords[i + 1].lat, coords[i + 1].lng]])
+          ));
+          map.fitBounds(group.getBounds(), { padding: [20, 20] });
+
+        } catch (routeError) {
+          console.error("Route processing error:", routeError);
+          setError("Failed to process route data");
+        }
+      });
+
+      control.on("routingerror", (e: any) => {
+        console.error("Routing error:", e);
+        setError("Failed to calculate route. Please try different locations or check your internet connection.");
+      });
+
+    } catch (err) {
+      console.error("Route drawing error:", err);
+      setError(err instanceof Error ? err.message : "Failed to draw route");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Draggable panel functionality
+  const onMouseDown = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.tagName === "INPUT" ||
+      target.tagName === "BUTTON" ||
+      target.tagName === "LABEL" ||
+      target.closest("input, button, label")
+    ) {
+      return;
+    }
+
+    isDragging.current = true;
+    const rect = panelRef.current!.getBoundingClientRect();
+    dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    e.preventDefault();
+  };
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!isDragging.current || !panelRef.current) return;
+
+    const newX = Math.max(
+      0,
+      Math.min(
+        window.innerWidth - panelRef.current.offsetWidth,
+        e.clientX - dragOffset.current.x
+      )
+    );
+    const newY = Math.max(
+      0,
+      Math.min(
+        window.innerHeight - panelRef.current.offsetHeight,
+        e.clientY - dragOffset.current.y
+      )
+    );
+
+    panelRef.current.style.left = `${newX}px`;
+    panelRef.current.style.top = `${newY}px`;
+  };
+
+  const onMouseUp = () => {
+    isDragging.current = false;
+  };
+
+  useEffect(() => {
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      
+      // Cleanup debounce timeouts
+      Object.values(debounceTimeouts.current).forEach(timeout => {
+        if (timeout) clearTimeout(timeout);
+      });
+    };
+  }, []);
+
+  // Set default datetime-local value
+  useEffect(() => {
+    if (!customTime) {
+      const now = new Date();
+      const localDateTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16);
+      setCustomTime(localDateTime);
+    }
+  }, [customTime]);
+
+  return (
+    <div className="relative w-full h-screen bg-gray-900">
+      <div id="map" className="absolute top-0 left-0 w-full h-full z-0"></div>
+      
+      {error && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 z-50 bg-red-600 text-white p-3 rounded shadow-lg max-w-md text-center">
+          {error}
+          <button
+            onClick={() => setError("")}
+            className="ml-2 text-red-200 hover:text-white font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      <div
+        ref={panelRef}
+        className="absolute top-4 left-4 z-50 bg-black bg-opacity-90 p-4 rounded-lg shadow-xl border border-gray-600 pointer-events-auto min-w-96"
+      >
+        <div className="flex items-center mb-3 cursor-move" onMouseDown={onMouseDown}>
+          <div className="text-white text-sm font-medium">☰ Sun Route Planner - Drag to move</div>
+        </div>
+        
+        <div className="space-y-3 pointer-events-auto">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Start location"
+              value={startText}
+              onChange={(e) => handleStartChange(e.target.value)}
+              className="border border-gray-600 p-2 w-full bg-gray-800 text-white rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            {startSuggestions.length > 0 && (
+              <ul className="absolute top-full left-0 bg-gray-800 text-white border border-gray-600 w-full max-h-48 overflow-y-auto z-50 rounded shadow-lg">
+                {startSuggestions.map((s, idx) => (
+                  <li
+                    key={idx}
+                    className="p-2 hover:bg-gray-700 cursor-pointer border-b border-gray-700 last:border-b-0 text-sm"
+                    onClick={() => selectStart(s)}
+                  >
+                    {s.display_name}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="End location"
+              value={endText}
+              onChange={(e) => handleEndChange(e.target.value)}
+              className="border border-gray-600 p-2 w-full bg-gray-800 text-white rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+            {endSuggestions.length > 0 && (
+              <ul className="absolute top-full left-0 bg-gray-800 text-white border border-gray-600 w-full max-h-48 overflow-y-auto z-50 rounded shadow-lg">
+                {endSuggestions.map((s, idx) => (
+                  <li
+                    key={idx}
+                    className="p-2 hover:bg-gray-700 cursor-pointer border-b border-gray-700 last:border-b-0 text-sm"
+                    onClick={() => selectEnd(s)}
+                  >
+                    {s.display_name}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-white flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={useCurrentTime}
+                onChange={(e) => setUseCurrentTime(e.target.checked)}
+                className="rounded"
+              />
+              Current time
+            </label>
+          </div>
+
+          {!useCurrentTime && (
+            <input
+              type="datetime-local"
+              value={customTime}
+              onChange={(e) => setCustomTime(e.target.value)}
+              className="border border-gray-600 p-2 w-full bg-gray-800 text-white rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+            />
+          )}
+
+          <button
+            onClick={drawRouteSun}
+            disabled={isLoading}
+            className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded transition-colors font-medium"
+          >
+            {isLoading ? "Calculating Route..." : "Draw Sun Route"}
+          </button>
+        </div>
+      </div>
+
+      <div className="absolute top-4 right-4 z-50 bg-black bg-opacity-90 p-4 rounded-lg shadow-xl border border-gray-600">
+        <h3 className="text-white font-bold mb-2 text-sm">Legend</h3>
+        <div className="text-xs text-white space-y-1">
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-2 bg-green-500 rounded"></div>
+            <span>right</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-2 bg-red-500 rounded"></div>
+            <span>left</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-2 bg-blue-500 rounded"></div>
+            <span>Nighttime</span>
+          </div>
+        </div>
+      </div>
+
+      <div
+        id="sunPercent"
+        className="absolute bottom-4 left-4 z-50 bg-black bg-opacity-90 p-3 text-white rounded-lg shadow-xl border border-gray-600"
+      >
+        Left: 0% ☀️ | Right: 0% ☀️
+      </div>
+    </div>
+  );
+}
