@@ -63,6 +63,7 @@ export default function MapWithSunRoute() {
   const [useCurrentTime, setUseCurrentTime] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string>("")
+  const [routeCalculated, setRouteCalculated] = useState(false)
 
   const panelRef = useRef<HTMLDivElement>(null)
   const dragOffset = useRef({ x: 0, y: 0 })
@@ -470,6 +471,8 @@ export default function MapWithSunRoute() {
             ),
           )
           map.fitBounds(group.getBounds(), { padding: [20, 20] })
+
+          setRouteCalculated(true)
         } catch (routeError) {
           console.error("Route processing error:", routeError)
           setError("Failed to process route data")
@@ -488,7 +491,44 @@ export default function MapWithSunRoute() {
     }
   }
 
-  // Draggable panel functionality
+  const resetRoute = () => {
+    setRouteCalculated(false)
+    setStartText("")
+    setEndText("")
+    setStartCoords(null)
+    setEndCoords(null)
+    setStartSuggestions([])
+    setEndSuggestions([])
+    setError("")
+
+    // Clear the map
+    if (map && routingControlRef.current) {
+      map.removeControl(routingControlRef.current)
+      routingControlRef.current = null
+    }
+
+    // Remove existing polylines
+    if (map) {
+      map.eachLayer((layer: any) => {
+        if (layer.options?.weight === 5) {
+          map.removeLayer(layer)
+        }
+      })
+    }
+
+    // Reset sun percentage display
+    const percentDiv = document.getElementById("sunPercent")
+    if (percentDiv) {
+      percentDiv.innerHTML = `
+        <div className="flex items-center justify-center gap-2">
+          <span>Left: 0% ☀️</span>
+          <span className="text-white/60">|</span>
+          <span>Right: 0% ☀️</span>
+        </div>
+      `
+    }
+  }
+
   const onMouseDown = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement
     if (
@@ -503,6 +543,24 @@ export default function MapWithSunRoute() {
     isDragging.current = true
     const rect = panelRef.current!.getBoundingClientRect()
     dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    e.preventDefault()
+  }
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement
+    if (
+      target.tagName === "INPUT" ||
+      target.tagName === "BUTTON" ||
+      target.tagName === "LABEL" ||
+      target.closest("input, button, label")
+    ) {
+      return
+    }
+
+    isDragging.current = true
+    const rect = panelRef.current!.getBoundingClientRect()
+    const touch = e.touches[0]
+    dragOffset.current = { x: touch.clientX - rect.left, y: touch.clientY - rect.top }
     e.preventDefault()
   }
 
@@ -522,17 +580,43 @@ export default function MapWithSunRoute() {
     panelRef.current.style.top = `${newY}px`
   }
 
+  const onTouchMove = (e: TouchEvent) => {
+    if (!isDragging.current || !panelRef.current) return
+
+    const touch = e.touches[0]
+    const newX = Math.max(
+      0,
+      Math.min(window.innerWidth - panelRef.current.offsetWidth, touch.clientX - dragOffset.current.x),
+    )
+    const newY = Math.max(
+      0,
+      Math.min(window.innerHeight - panelRef.current.offsetHeight, touch.clientY - dragOffset.current.y),
+    )
+
+    panelRef.current.style.left = `${newX}px`
+    panelRef.current.style.top = `${newY}px`
+    e.preventDefault()
+  }
+
   const onMouseUp = () => {
+    isDragging.current = false
+  }
+
+  const onTouchEnd = () => {
     isDragging.current = false
   }
 
   useEffect(() => {
     window.addEventListener("mousemove", onMouseMove)
     window.addEventListener("mouseup", onMouseUp)
+    window.addEventListener("touchmove", onTouchMove, { passive: false })
+    window.addEventListener("touchend", onTouchEnd)
 
     return () => {
       window.removeEventListener("mousemove", onMouseMove)
       window.removeEventListener("mouseup", onMouseUp)
+      window.removeEventListener("touchmove", onTouchMove)
+      window.removeEventListener("touchend", onTouchEnd)
 
       // Cleanup debounce timeouts
       Object.values(debounceTimeouts.current).forEach((timeout) => {
@@ -573,6 +657,7 @@ export default function MapWithSunRoute() {
         <div
           className="flex items-center justify-between p-4 pb-3 cursor-move border-b border-white/10"
           onMouseDown={onMouseDown}
+          onTouchStart={onTouchStart}
         >
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></div>
@@ -582,100 +667,115 @@ export default function MapWithSunRoute() {
         </div>
 
         <div className="p-4 space-y-3 pointer-events-auto">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Start location"
-              value={startText}
-              onChange={(e) => handleStartChange(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/60 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 focus:outline-none transition-all duration-200"
-            />
-            {startSuggestions.length > 0 && (
-              <ul className="absolute top-full left-0 mt-1 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
-                {startSuggestions.map((s, idx) => (
-                  <li
-                    key={idx}
-                    className="p-3 hover:bg-white/20 cursor-pointer border-b border-white/10 last:border-b-0 text-xs text-white/90 transition-colors duration-150"
-                    onClick={() => selectStart(s)}
-                  >
-                    {s.display_name}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="End location"
-              value={endText}
-              onChange={(e) => handleEndChange(e.target.value)}
-              className="w-full px-3 py-2.5 text-sm bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/60 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 focus:outline-none transition-all duration-200"
-            />
-            {endSuggestions.length > 0 && (
-              <ul className="absolute top-full left-0 mt-1 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
-                {endSuggestions.map((s, idx) => (
-                  <li
-                    key={idx}
-                    className="p-3 hover:bg-white/20 cursor-pointer border-b border-white/10 last:border-b-0 text-xs text-white/90 transition-colors duration-150"
-                    onClick={() => selectEnd(s)}
-                  >
-                    {s.display_name}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <label className="text-white/90 flex items-center gap-2 text-sm cursor-pointer">
+          {!routeCalculated ? (
+            <>
+              <div className="relative">
                 <input
-                  type="checkbox"
-                  checked={useCurrentTime}
-                  onChange={(e) => setUseCurrentTime(e.target.checked)}
-                  className="w-4 h-4 rounded bg-white/10 border border-white/30 text-blue-400 focus:ring-2 focus:ring-blue-400/50"
+                  type="text"
+                  placeholder="Start location"
+                  value={startText}
+                  onChange={(e) => handleStartChange(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/60 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 focus:outline-none transition-all duration-200"
                 />
-                Use current time
-              </label>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-white/80 text-xs font-medium">
-                {useCurrentTime ? "Current Date & Time:" : "Select Date & Time:"}
-              </label>
-              <input
-                type="datetime-local"
-                value={customTime}
-                onChange={(e) => setCustomTime(e.target.value)}
-                disabled={useCurrentTime}
-                className={`w-full px-3 py-2.5 text-sm backdrop-blur-sm border rounded-xl transition-all duration-200 ${
-                  useCurrentTime
-                    ? "bg-white/5 border-white/10 text-white/50 cursor-not-allowed"
-                    : "bg-white/10 border-white/20 text-white focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50"
-                } focus:outline-none`}
-              />
-              {!useCurrentTime && (
-                <p className="text-white/60 text-xs">Sun calculations will be based on this date and time</p>
-              )}
-            </div>
-          </div>
-
-          <button
-            onClick={drawRouteSun}
-            disabled={isLoading}
-            className="w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 disabled:from-gray-500 disabled:to-gray-600 text-white rounded-xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl disabled:cursor-not-allowed"
-          >
-            {isLoading ? (
-              <div className="flex items-center justify-center gap-2">
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                Calculating Route...
+                {startSuggestions.length > 0 && (
+                  <ul className="absolute top-full left-0 mt-1 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
+                    {startSuggestions.map((s, idx) => (
+                      <li
+                        key={idx}
+                        className="p-3 hover:bg-white/20 cursor-pointer border-b border-white/10 last:border-b-0 text-xs text-white/90 transition-colors duration-150"
+                        onClick={() => selectStart(s)}
+                      >
+                        {s.display_name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-            ) : (
-              "Draw Sun Route"
-            )}
-          </button>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="End location"
+                  value={endText}
+                  onChange={(e) => handleEndChange(e.target.value)}
+                  className="w-full px-3 py-2.5 text-sm bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/60 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 focus:outline-none transition-all duration-200"
+                />
+                {endSuggestions.length > 0 && (
+                  <ul className="absolute top-full left-0 mt-1 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
+                    {endSuggestions.map((s, idx) => (
+                      <li
+                        key={idx}
+                        className="p-3 hover:bg-white/20 cursor-pointer border-b border-white/10 last:border-b-0 text-xs text-white/90 transition-colors duration-150"
+                        onClick={() => selectEnd(s)}
+                      >
+                        {s.display_name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <label className="text-white/90 flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useCurrentTime}
+                      onChange={(e) => setUseCurrentTime(e.target.checked)}
+                      className="w-4 h-4 rounded bg-white/10 border border-white/30 text-blue-400 focus:ring-2 focus:ring-blue-400/50"
+                    />
+                    Use current time
+                  </label>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-white/80 text-xs font-medium">
+                    {useCurrentTime ? "Current Date & Time:" : "Select Date & Time:"}
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={customTime}
+                    onChange={(e) => setCustomTime(e.target.value)}
+                    disabled={useCurrentTime}
+                    className={`w-full px-3 py-2.5 text-sm backdrop-blur-sm border rounded-xl transition-all duration-200 ${
+                      useCurrentTime
+                        ? "bg-white/5 border-white/10 text-white/50 cursor-not-allowed"
+                        : "bg-white/10 border-white/20 text-white focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50"
+                    } focus:outline-none`}
+                  />
+                  {!useCurrentTime && (
+                    <p className="text-white/60 text-xs">Sun calculations will be based on this date and time</p>
+                  )}
+                </div>
+              </div>
+
+              <button
+                onClick={drawRouteSun}
+                disabled={isLoading}
+                className="w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 disabled:from-gray-500 disabled:to-gray-600 text-white rounded-xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl disabled:cursor-not-allowed"
+              >
+                {isLoading ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    Calculating Route...
+                  </div>
+                ) : (
+                  "Draw Sun Route"
+                )}
+              </button>
+            </>
+          ) : (
+            /* Show try again button when route is calculated */
+            <div className="text-center space-y-3">
+              <div className="text-white/90 text-sm">✅ Route calculated successfully!</div>
+              <button
+                onClick={resetRoute}
+                className="w-full px-4 py-3 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl"
+              >
+                Try Again
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
