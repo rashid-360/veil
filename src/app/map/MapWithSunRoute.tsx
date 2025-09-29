@@ -263,9 +263,9 @@ export default function MapWithSunRoute() {
     return R * c // Distance in km
   }
 
-  const timePerSegment = (lat1: number, lon1: number, lat2: number, lon2: number, speed = 15): number => {
+  const timePerSegment = (lat1: number, lon1: number, lat2: number, lon2: number, speed = 12): number => {
     const distance = calculateDistance(lat1, lon1, lat2, lon2)
-    return (distance / speed) * 3600 * 1000 // Time in milliseconds
+    return (distance / speed) * 3600 * 1000 // Time in milliseconds (default 50 km/h average speed)
   }
 
   const getSunAzimuth = (lat: number, lon: number, date: Date = new Date()) => {
@@ -396,21 +396,31 @@ export default function MapWithSunRoute() {
 
             const next = coords[i + 1]
             const segmentTime = timePerSegment(curr.lat, curr.lng, next.lat, next.lng)
+            
+            // Calculate sun position at the START of this segment
+            const dateAtSegment = new Date(startTime.getTime() + cumulativeTime)
+            
             cumulativeTime += segmentTime
 
-            const dateAtSegment = new Date(startTime.getTime() + cumulativeTime)
             const heading = getBearing(curr.lat, curr.lng, next.lat, next.lng)
             const sun = getSunAzimuth(curr.lat, curr.lng, dateAtSegment)
 
-            // Calculate relative angle between sun and heading
-            const relAngle = (sun.azimuth - heading + 360) % 360
+            // Calculate relative angle: positive means sun is to the right, negative means left
+            let relAngle = sun.azimuth - heading
+            
+            // Normalize to -180 to 180 range
+            if (relAngle > 180) relAngle -= 360
+            if (relAngle < -180) relAngle += 360
 
             let color = "#4444aa" // Default nighttime color
 
             if (sun.altitude > 0) {
               // Sun is above horizon
               totalSegments++
-              if (relAngle < 180) {
+              
+              // If relAngle is positive (0 to 180), sun is on the right
+              // If relAngle is negative (-180 to 0), sun is on the left
+              if (relAngle > 0) {
                 rightSunTime += segmentTime
                 color = "#baffc9" // Green for sun on right
               } else {
@@ -678,11 +688,11 @@ export default function MapWithSunRoute() {
                   className="w-full px-3 py-2.5 text-sm bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/60 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 focus:outline-none transition-all duration-200"
                 />
                 {startSuggestions.length > 0 && (
-                  <ul className="absolute top-full left-0 mt-1 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
+                  <ul className="absolute top-full left-0 mt-1 bg-gray-900/95 backdrop-blur-xl border border-white/30 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
                     {startSuggestions.map((s, idx) => (
                       <li
                         key={idx}
-                        className="p-3 hover:bg-white/20 cursor-pointer border-b border-white/10 last:border-b-0 text-xs text-white/90 transition-colors duration-150"
+                        className="p-3 hover:bg-white/25 cursor-pointer border-b border-white/15 last:border-b-0 text-xs text-white transition-colors duration-150"
                         onClick={() => selectStart(s)}
                       >
                         {s.display_name}
@@ -701,11 +711,11 @@ export default function MapWithSunRoute() {
                   className="w-full px-3 py-2.5 text-sm bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/60 focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 focus:outline-none transition-all duration-200"
                 />
                 {endSuggestions.length > 0 && (
-                  <ul className="absolute top-full left-0 mt-1 bg-white/10 backdrop-blur-xl border border-white/20 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
+                  <ul className="absolute top-full left-0 mt-1 bg-gray-900/95 backdrop-blur-xl border border-white/30 w-full max-h-40 overflow-y-auto z-50 rounded-xl shadow-2xl">
                     {endSuggestions.map((s, idx) => (
                       <li
                         key={idx}
-                        className="p-3 hover:bg-white/20 cursor-pointer border-b border-white/10 last:border-b-0 text-xs text-white/90 transition-colors duration-150"
+                        className="p-3 hover:bg-white/25 cursor-pointer border-b border-white/15 last:border-b-0 text-xs text-white transition-colors duration-150"
                         onClick={() => selectEnd(s)}
                       >
                         {s.display_name}
@@ -765,7 +775,6 @@ export default function MapWithSunRoute() {
               </button>
             </>
           ) : (
-            /* Show try again button when route is calculated */
             <div className="text-center space-y-3">
               <div className="text-white/90 text-sm">✅ Route calculated successfully!</div>
               <button
