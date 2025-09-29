@@ -407,10 +407,10 @@ export default function MapWithSunRoute() {
               totalSegments++;
               if (relAngle < 180) {
                 rightSunTime += segmentTime;
-                color = "#22aa22"; // Green for sun on right
+                color = "#baffc9"; // Green for sun on right
               } else {
                 leftSunTime += segmentTime;
-                color = "#aa2222"; // Red for sun on left
+                color = "#ffb3ba"; // Red for sun on left
               }
             }
 
@@ -433,12 +433,27 @@ export default function MapWithSunRoute() {
           const percentDiv = document.getElementById("sunPercent");
           if (percentDiv) {
             if (totalSunTime === 0) {
-              percentDiv.innerHTML = "Route entirely in darkness 🌙";
+              percentDiv.innerHTML = `<span style="color: gray;">Route entirely in darkness 🌙</span>`;
             } else {
-              percentDiv.innerHTML = `Left: ${leftPercent}% ☀️ | Right: ${rightPercent}% ☀️`;
+              // highlight percentages with route colors
+              const leftHTML = `<span style="color:#ffb3ba; font-weight:bold;">${leftPercent}% ☀️</span>`;
+              const rightHTML = `<span style="color:#baffc9; font-weight:bold;">${rightPercent}% ☀️</span>`;
+          
+              // suggestion logic
+              let suggestion = "";
+              if (leftPercent > rightPercent) {
+                suggestion = `<span style="color:#ffb3ba;">Sit on the left side </span>`;
+              } else if (rightPercent > leftPercent) {
+                suggestion = `<span style="color:#baffc9;">Sit on the right side </span>`;
+              } else {
+                suggestion = `<span style="color:gray;">Both sides equal </span>`;
+              }
+          
+              percentDiv.innerHTML = `Left: ${leftHTML} | Right: ${rightHTML}<br/>${suggestion}`;
             }
           }
-
+          
+          
           // Fit map to route
           const group = L.featureGroup(coords.slice(0, -1).map((curr, i) => 
             L.polyline([[curr.lat, curr.lng], [coords[i + 1].lat, coords[i + 1].lng]])
@@ -636,29 +651,13 @@ export default function MapWithSunRoute() {
         </div>
       </div>
 
-      <div className="absolute top-4 right-4 z-50 bg-black bg-opacity-90 p-4 rounded-lg shadow-xl border border-gray-600">
-        <h3 className="text-white font-bold mb-2 text-sm">Legend</h3>
-        <div className="text-xs text-white space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-2 bg-green-500 rounded"></div>
-            <span>right</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-2 bg-red-500 rounded"></div>
-            <span>left</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-2 bg-blue-500 rounded"></div>
-            <span>Nighttime</span>
-          </div>
-        </div>
-      </div>
-
       <div
         id="sunPercent"
         className="absolute bottom-4 left-4 z-50 bg-black bg-opacity-90 p-3 text-white rounded-lg shadow-xl border border-gray-600"
       >
         Left: 0% ☀️ | Right: 0% ☀️
+
+       
       </div>
     </div>
   );
