@@ -12,7 +12,6 @@ const getSunPosition = (date: Date, lat: number, lng: number) => {
   const J2000 = 2451545
 
   const toJulian = (date: Date) => date.getTime() / dayMs - 0.5 + J1970
-  const fromJulian = (j: number) => new Date((j + 0.5 - J1970) * dayMs)
   const toDays = (date: Date) => toJulian(date) - J2000
 
   const rightAscension = (l: number, b: number) =>
@@ -74,7 +73,6 @@ export default function MapWithSunRoute() {
   // Load routing machine dynamically
   const loadRoutingMachine = (): Promise<void> => {
     return new Promise((resolve, reject) => {
-      // Check if already loaded
       if ((window as any).L && (window as any).L.Routing) {
         resolve()
         return
@@ -85,7 +83,6 @@ export default function MapWithSunRoute() {
       script.async = true
 
       script.onload = () => {
-        // Wait a bit for the script to initialize
         setTimeout(() => {
           if ((window as any).L && (window as any).L.Routing) {
             resolve()
@@ -107,7 +104,6 @@ export default function MapWithSunRoute() {
   useEffect(() => {
     const loadLeaflet = async () => {
       try {
-        // Load Leaflet CSS
         const link = document.createElement("link")
         link.rel = "stylesheet"
         link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -115,7 +111,6 @@ export default function MapWithSunRoute() {
 
         const leaflet = await import("leaflet")
 
-        // Fix default markers
         delete (leaflet.Icon.Default.prototype as any)._getIconUrl
         leaflet.Icon.Default.mergeOptions({
           iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -133,7 +128,6 @@ export default function MapWithSunRoute() {
           })
           .addTo(mapInstance)
 
-        // Load routing machine script dynamically
         await loadRoutingMachine()
 
         setL(leaflet)
@@ -191,13 +185,11 @@ export default function MapWithSunRoute() {
   const handleStartChange = async (val: string) => {
     setStartText(val)
 
-    // Clear previous timeout
     if (debounceTimeouts.current.start) {
       clearTimeout(debounceTimeouts.current.start)
     }
 
     if (val.length > 2) {
-      // Debounce search requests
       debounceTimeouts.current.start = setTimeout(async () => {
         const results = await searchLocation(val)
         setStartSuggestions(results)
@@ -210,13 +202,11 @@ export default function MapWithSunRoute() {
   const handleEndChange = async (val: string) => {
     setEndText(val)
 
-    // Clear previous timeout
     if (debounceTimeouts.current.end) {
       clearTimeout(debounceTimeouts.current.end)
     }
 
     if (val.length > 2) {
-      // Debounce search requests
       debounceTimeouts.current.end = setTimeout(async () => {
         const results = await searchLocation(val)
         setEndSuggestions(results)
@@ -243,15 +233,18 @@ export default function MapWithSunRoute() {
     const toDeg = (rad: number) => (rad * 180) / Math.PI
 
     const dLon = toRad(lon2 - lon1)
-    const y = Math.sin(dLon) * Math.cos(toRad(lat2))
-    const x =
-      Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon)
+    const lat1Rad = toRad(lat1)
+    const lat2Rad = toRad(lat2)
 
-    return (toDeg(Math.atan2(y, x)) + 360) % 360
+    const y = Math.sin(dLon) * Math.cos(lat2Rad)
+    const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon)
+
+    const bearing = toDeg(Math.atan2(y, x))
+    return (bearing + 360) % 360
   }
 
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371 // Earth's radius in km
+    const R = 6371
     const dLat = ((lat2 - lat1) * Math.PI) / 180
     const dLon = ((lon2 - lon1) * Math.PI) / 180
 
@@ -260,12 +253,12 @@ export default function MapWithSunRoute() {
       Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2
 
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-    return R * c // Distance in km
+    return R * c
   }
 
-  const timePerSegment = (lat1: number, lon1: number, lat2: number, lon2: number, speed = 12): number => {
+  const timePerSegment = (lat1: number, lon1: number, lat2: number, lon2: number, speed = 50): number => {
     const distance = calculateDistance(lat1, lon1, lat2, lon2)
-    return (distance / speed) * 3600 * 1000 // Time in milliseconds (default 50 km/h average speed)
+    return (distance / speed) * 3600 * 1000
   }
 
   const getSunAzimuth = (lat: number, lon: number, date: Date = new Date()) => {
@@ -283,13 +276,11 @@ export default function MapWithSunRoute() {
     setError("")
 
     try {
-      // Clear existing route
       if (routingControlRef.current) {
         map.removeControl(routingControlRef.current)
         routingControlRef.current = null
       }
 
-      // Remove existing polylines
       map.eachLayer((layer: any) => {
         if (layer.options?.weight === 5) {
           map.removeLayer(layer)
@@ -299,7 +290,6 @@ export default function MapWithSunRoute() {
       let start = startCoords
       let end = endCoords
 
-      // Resolve coordinates if needed
       if (!start && startText.trim()) {
         const startResults = await searchLocation(startText)
         if (startResults.length > 0) {
@@ -327,7 +317,6 @@ export default function MapWithSunRoute() {
         return
       }
 
-      // Validate coordinates
       if (isNaN(start.lat) || isNaN(start.lng) || isNaN(end.lat) || isNaN(end.lng)) {
         setError("Invalid coordinates. Please select valid locations.")
         return
@@ -336,7 +325,6 @@ export default function MapWithSunRoute() {
       const startLatLng = L.latLng(start.lat, start.lng)
       const endLatLng = L.latLng(end.lat, end.lng)
 
-      // Check if L.Routing exists
       if (!L.Routing && !(window as any).L.Routing) {
         setError("Routing functionality not available. Please refresh the page.")
         return
@@ -354,13 +342,12 @@ export default function MapWithSunRoute() {
         lineOptions: {
           styles: [{ opacity: 0, weight: 0 }],
         },
-        createMarker: () => null, // Don't create default markers
+        createMarker: () => null,
       })
 
       routingControlRef.current = control
       control.addTo(map)
 
-      // Hide routing instructions
       setTimeout(() => {
         const routingContainer = document.querySelector(".leaflet-routing-container")
         if (routingContainer) {
@@ -389,7 +376,6 @@ export default function MapWithSunRoute() {
           let cumulativeTime = 0
           let leftSunTime = 0
           let rightSunTime = 0
-          let totalSegments = 0
 
           coords.forEach((curr, i) => {
             if (i === coords.length - 1) return
@@ -397,7 +383,6 @@ export default function MapWithSunRoute() {
             const next = coords[i + 1]
             const segmentTime = timePerSegment(curr.lat, curr.lng, next.lat, next.lng)
             
-            // Calculate sun position at the START of this segment
             const dateAtSegment = new Date(startTime.getTime() + cumulativeTime)
             
             cumulativeTime += segmentTime
@@ -405,31 +390,30 @@ export default function MapWithSunRoute() {
             const heading = getBearing(curr.lat, curr.lng, next.lat, next.lng)
             const sun = getSunAzimuth(curr.lat, curr.lng, dateAtSegment)
 
-            // Calculate relative angle: positive means sun is to the right, negative means left
+            // Sun altitude check: -0.833 degrees accounts for atmospheric refraction
+            // This is when the sun's upper edge touches the horizon
+            const HORIZON_THRESHOLD = -0.833
+            
             let relAngle = sun.azimuth - heading
             
-            // Normalize to -180 to 180 range
             if (relAngle > 180) relAngle -= 360
             if (relAngle < -180) relAngle += 360
 
-            let color = "#4444aa" // Default nighttime color
+            let color = "#4444aa"
 
-            if (sun.altitude > 0) {
-              // Sun is above horizon
-              totalSegments++
-              
-              // If relAngle is positive (0 to 180), sun is on the right
-              // If relAngle is negative (-180 to 0), sun is on the left
+            if (sun.altitude > HORIZON_THRESHOLD) {
+              // Sun is above horizon (visible)
               if (relAngle > 0) {
+                // Sun on the right side (0 to 180 degrees)
                 rightSunTime += segmentTime
-                color = "#baffc9" // Green for sun on right
+                color = "#baffc9"
               } else {
+                // Sun on the left side (-180 to 0 degrees)
                 leftSunTime += segmentTime
-                color = "#ffb3ba" // Red for sun on left
+                color = "#ffb3ba"
               }
             }
 
-            // Draw segment
             L.polyline(
               [
                 [curr.lat, curr.lng],
@@ -443,7 +427,6 @@ export default function MapWithSunRoute() {
             ).addTo(map)
           })
 
-          // Update percentage display
           const totalSunTime = leftSunTime + rightSunTime
           const leftPercent = totalSunTime > 0 ? Math.round((leftSunTime / totalSunTime) * 100) : 0
           const rightPercent = totalSunTime > 0 ? Math.round((rightSunTime / totalSunTime) * 100) : 0
@@ -451,27 +434,31 @@ export default function MapWithSunRoute() {
           const percentDiv = document.getElementById("sunPercent")
           if (percentDiv) {
             if (totalSunTime === 0) {
-              percentDiv.innerHTML = `<span style="color: gray;">Route entirely in darkness 🌙</span>`
+              percentDiv.innerHTML = `<span style="color: #9ca3af;">Route entirely in darkness 🌙</span>`
             } else {
-              // highlight percentages with route colors
-              const leftHTML = `<span style="color:#ffb3ba; font-weight:bold;">${leftPercent}% ☀️</span>`
-              const rightHTML = `<span style="color:#baffc9; font-weight:bold;">${rightPercent}% ☀️</span>`
+              const leftHTML = `<span style="color:#ffb3ba; font-weight:bold;">${leftPercent}%</span>`
+              const rightHTML = `<span style="color:#baffc9; font-weight:bold;">${rightPercent}%</span>`
 
-              // suggestion logic
               let suggestion = ""
-              if (leftPercent > rightPercent) {
-                suggestion = `<span style="color:#ffb3ba;">Sit on the left side </span>`
-              } else if (rightPercent > leftPercent) {
-                suggestion = `<span style="color:#baffc9;">Sit on the right side </span>`
+              if (leftPercent > rightPercent + 5) {
+                suggestion = `<span style="color:#baffc9;">💡 Sit on the right side to avoid sun</span>`
+              } else if (rightPercent > leftPercent + 5) {
+                suggestion = `<span style="color:#ffb3ba;">💡 Sit on the left side to avoid sun</span>`
               } else {
-                suggestion = `<span style="color:gray;">Both sides equal </span>`
+                suggestion = `<span style="color:#9ca3af;">Both sides get similar sun exposure</span>`
               }
 
-              percentDiv.innerHTML = `Left: ${leftHTML} | Right: ${rightHTML}<br/>${suggestion}`
+              percentDiv.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 8px;">
+                  <span>Left: ${leftHTML} ☀️</span>
+                  <span style="color: rgba(255, 255, 255, 0.6);">|</span>
+                  <span>Right: ${rightHTML} ☀️</span>
+                </div>
+                <div style="font-size: 0.875rem;">${suggestion}</div>
+              `
             }
           }
 
-          // Fit map to route
           const group = L.featureGroup(
             coords.slice(0, -1).map((curr, i) =>
               L.polyline([
@@ -511,13 +498,11 @@ export default function MapWithSunRoute() {
     setEndSuggestions([])
     setError("")
 
-    // Clear the map
     if (map && routingControlRef.current) {
       map.removeControl(routingControlRef.current)
       routingControlRef.current = null
     }
 
-    // Remove existing polylines
     if (map) {
       map.eachLayer((layer: any) => {
         if (layer.options?.weight === 5) {
@@ -526,13 +511,12 @@ export default function MapWithSunRoute() {
       })
     }
 
-    // Reset sun percentage display
     const percentDiv = document.getElementById("sunPercent")
     if (percentDiv) {
       percentDiv.innerHTML = `
-        <div className="flex items-center justify-center gap-2">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
           <span>Left: 0% ☀️</span>
-          <span className="text-white/60">|</span>
+          <span style="color: rgba(255, 255, 255, 0.6);">|</span>
           <span>Right: 0% ☀️</span>
         </div>
       `
@@ -628,14 +612,12 @@ export default function MapWithSunRoute() {
       window.removeEventListener("touchmove", onTouchMove)
       window.removeEventListener("touchend", onTouchEnd)
 
-      // Cleanup debounce timeouts
       Object.values(debounceTimeouts.current).forEach((timeout) => {
         if (timeout) clearTimeout(timeout)
       })
     }
   }, [])
 
-  // Set default datetime-local value
   useEffect(() => {
     if (!customTime) {
       const now = new Date()
@@ -794,9 +776,9 @@ export default function MapWithSunRoute() {
                    max-w-[90%] sm:max-w-md backdrop-blur-xl bg-white/10 border border-white/20 p-4 
                    text-white rounded-2xl shadow-2xl text-sm font-medium text-center"
       >
-        <div className="flex items-center justify-center gap-2">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
           <span>Left: 0% ☀️</span>
-          <span className="text-white/60">|</span>
+          <span style={{ color: 'rgba(255, 255, 255, 0.6)' }}>|</span>
           <span>Right: 0% ☀️</span>
         </div>
       </div>
