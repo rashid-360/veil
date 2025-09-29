@@ -570,7 +570,7 @@ export default function MapWithSunRoute() {
         className="absolute top-4 left-4 z-50 bg-black bg-opacity-90 p-4 rounded-lg shadow-xl border border-gray-600 pointer-events-auto min-w-96"
       >
         <div className="flex items-center mb-3 cursor-move" onMouseDown={onMouseDown}>
-          <div className="text-white text-sm font-medium">☰ Sun Route Planner - Drag to move</div>
+          <div className="text-white text-sm font-medium">☰ Avoid sun</div>
         </div>
         
         <div className="space-y-3 pointer-events-auto">
@@ -652,13 +652,14 @@ export default function MapWithSunRoute() {
       </div>
 
       <div
-        id="sunPercent"
-        className="absolute bottom-4 left-4 z-50 bg-black bg-opacity-90 p-3 text-white rounded-lg shadow-xl border border-gray-600"
-      >
-        Left: 0% ☀️ | Right: 0% ☀️
+  id="sunPercent"
+  className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 
+             max-w-[90%] bg-black bg-opacity-10 p-3 
+             text-white rounded-lg shadow-xl border border-gray-600 text-sm sm:text-base"
+>
+  Left: 0% ☀️ | Right: 0% ☀️
+</div>
 
-       
-      </div>
     </div>
   );
 }
